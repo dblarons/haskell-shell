@@ -1,4 +1,4 @@
-## Hash - Haskell, a Shell
+## Hash - Haskell, a Shell; or, Hashkell
 
 #### Team Members with their vunetid
 
@@ -12,9 +12,9 @@ Aaron Smith `smithah4`
 
   - `cd`: change directory has to be run on the main thread, otherwise the
       directory doesn't get changed because the thread that changed directory
-      gets killed. [TODO: Handle error conditions]
+      gets killed. [DONE]
 
-  - `exit`: exit likewise needs to be run on the main thread, for the same
+  - `exit`: exit needs to be run on the main thread, for the same
       reasons that cd needs to be run there. [DONE]
 
   - `help`: help needs to be a builtin because it is specific to my
@@ -22,6 +22,7 @@ Aaron Smith `smithah4`
 
   - `|` (pipe operator): the pipe operator will be a builtin. It will take the
       text output from one command and pass it to another command.
+      https://downloads.haskell.org/~ghc/6.12.2/docs/html/libraries/unix-2.4.0.1/System-Posix-IO.html#8
 
   - `>` (I/O redirection operator): the redirection operator will allow the
       user to take stdout and redirect it into a file. Can redirect between
