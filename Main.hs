@@ -39,7 +39,7 @@ prompt env = do
     -- prompt for input
     putStr (last (splitOn "/" dir) ++  " $ ")
     -- read and split input
-    tok <- liftM (splitOn " ") getLine
+    tok <- liftM (splitOn " " . replaceEnvVars env) getLine
     -- launch child process and keep pid
     (status, newEnv) <- hashRun tok env
     -- respond to child PIDs of different id's
@@ -51,6 +51,14 @@ prompt env = do
               Status {code=Wait, pid=Nothing} -> fail "Invalid status code."
     responder status
 
+-- |Replace any instances of environment variables with their expanded
+-- form.
+replaceEnvVars :: Env -> String -> String
+replaceEnvVars env x = 
+    foldl (\acc xs -> 
+          if ("$" ++ fst xs) `isInfixOf` acc 
+            then replace ("$" ++ fst xs) (snd xs) acc 
+            else acc) x env
 
 -- |Wait on the child PID. Handle any errors, then send status to continue
 -- with prompt
@@ -113,30 +121,25 @@ hashExit _ = do
     putStrLn "Exiting..."
     return Status {code = Exit, pid = Nothing}
 
--- |Export a new or updated entry to the shell environment. Currently only
--- supports appending to environment variables.
-exportInsert :: (String, String) -> ExportType -> Env -> Env
-exportInsert x@(var, path) t env =
-    case t of
-      EnvNew -> env ++ [x]
-      EnvAppend -> updateVar (\y -> snd y ++ ":" ++ path)
-      EnvPrepend -> updateVar (\y -> path ++ ":" ++ snd y)
-    where updateVar f = map (\y -> if fst y == var then (fst y, f y) else x) env
+-- |Export a new or updated entry to the shell environment. 
+exportInsert :: (String, String) -> Env -> Env
+exportInsert x@(var, path) env =
+    case existing of
+      Just _ -> map (\y -> if fst y == var then x else y) env
+      Nothing -> env ++ [x]
+    where existing = lookup var env
 
 -- |Parse an export command and return a tuple describing the action: new,
 -- append, or prepend.
-exportParse :: String -> String -> ((String, String), ExportType)
+exportParse :: String -> String -> (String, String)
 exportParse x home = case parts of
-                       [a, b] -> ((a, b), EnvNew)
-                       [a, b, c] -> ((a, 
-                                    if "$" `isInfixOf` b then c else b), 
-                                    if "$" `isInfixOf` c then EnvPrepend else EnvAppend)
-    where parts = map (replace "$HOME" home) $ concatMap (splitOn ":") $ splitOn "=" x
+                       [a, b] -> (a, b)
+    where parts = map (replace "$HOME" home) $ splitOn "=" x
 
 hashExport :: [String] -> Env -> IO (Status, Env)
 hashExport [arg] env = do home <- getHomeDirectory
-                          let (p, t) = exportParse arg home
-                          return (Status {code = Prompt, pid = Nothing}, exportInsert p t env)
+                          let p = exportParse arg home
+                          return (Status {code = Prompt, pid = Nothing}, exportInsert p env)
 hashExport _ _ = fail "Too many arguments passed to export"
 
 -- |Fork and exec a command with associated arguments. Return child PID.

@@ -6,32 +6,20 @@ import Test.Hspec
 main :: IO ()
 main = hspec $ do
   describe "exportParse" $ do
-    it "should parse commands that contain $HOME" $ do
-      let env = exportParse "PATH=$HOME/bin/perl:$PATH" "Users/aaron" 
-      env `shouldBe` (("PATH", "Users/aaron/bin/perl"), EnvPrepend)
-
-    it "should parse appending commands" $ do
-      let env = exportParse "PATH=$PATH:~/opt/bin" ""
-      env `shouldBe` (("PATH", "~/opt/bin"), EnvAppend)
-
-    it "should parse prepending commands" $ do
-      let env = exportParse "PATH=~/opt/bin:$PATH" ""
-      env `shouldBe` (("PATH", "~/opt/bin"), EnvPrepend)
+    it "should parse a basic PATH assignment" $ do
+      let env = exportParse "PATH=/bin" ""
+      env `shouldBe` ("PATH", "/bin")
 
   describe "exportInsert" $ do
     let initEnv = [("PATH", "/bin")]
 
-    it "should insert a new export" $ do
-      let env = exportInsert ("PATH", "foo") EnvNew []
+    it "should insert a new export into the environment" $ do
+      let env = exportInsert ("PATH", "foo") []
       env `shouldBe` [("PATH", "foo")]
 
-    it "should append a new export" $ do
-      let env = exportInsert ("PATH", "/usr/local/bin") EnvAppend initEnv
-      env `shouldBe` [("PATH", "/bin:/usr/local/bin")]
-
-    it "should prepend a new export" $ do
-      let env = exportInsert ("PATH", "/usr/local/bin") EnvPrepend initEnv
-      env `shouldBe` [("PATH", "/usr/local/bin:/bin")]
-
-    
+  describe "replaceEnvVars" $ do
+    let env = exportInsert ("PATH", "/bin") []
+    it "should replace environment variables with their expanded form" $ do
+      let str = "echo $PATH"
+      replaceEnvVars env str `shouldBe` "echo /bin"
 
