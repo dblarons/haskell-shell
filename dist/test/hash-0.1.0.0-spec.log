@@ -1,4 +1,0 @@
-Test suite spec: RUNNING...
-> spec: <stdin>: hGetLine: end of file
-Test suite spec: FAIL
-Test suite logged to: dist/test/hash-0.1.0.0-spec.log
