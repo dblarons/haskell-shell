@@ -16,7 +16,6 @@ data Status = Status {code :: StatusCode, pid :: Maybe ProcessID} deriving (Show
 
 -- |Type synonym for the environment structure.
 type Env = [(String, String)]
-data ExportType = EnvNew | EnvAppend | EnvPrepend deriving (Eq, Show)
 
 -- |Built in commands available for execution.
 builtinCmds :: [(String, [String] -> IO Status)]
