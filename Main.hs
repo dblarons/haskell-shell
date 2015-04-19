@@ -25,7 +25,8 @@ builtinCmds = [("cd", hashCd),
 
 -- |Built in commands that require access to env.
 builtinCmdsEnv :: [(String, [String] -> Env -> IO (Status, Env))]
-builtinCmdsEnv = [("export", hashExport)]
+builtinCmdsEnv = [("export", hashExport),
+                 ("printenv", hashPrintEnv)]
 
 -- |Entry point for shell. Start prompt with clean environment.
 main :: IO ()
@@ -134,6 +135,12 @@ exportParse :: String -> String -> (String, String)
 exportParse x home = case parts of
                        [a, b] -> (a, b)
     where parts = map (replace "$HOME" home) $ splitOn "=" x
+
+-- |Provide our own version of printenv that prints our own environment
+-- variables.
+hashPrintEnv :: [String] -> Env -> IO (Status, Env)
+hashPrintEnv [] env = do mapM_ (\x -> putStrLn $ fst x ++ "=" ++ snd x) env
+                         return (Status {code = Prompt, pid = Nothing}, env)
 
 hashExport :: [String] -> Env -> IO (Status, Env)
 hashExport [arg] env = do home <- getHomeDirectory

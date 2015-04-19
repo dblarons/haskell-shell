@@ -11,34 +11,35 @@ Aaron Smith `smithah4`
 - Builtins
 
   - `cd`: change directory has to be run on the main thread, otherwise the
-      directory doesn't get changed because the thread that changed directory
-      gets killed. [DONE]
+    directory doesn't get changed because the thread that changed directory
+    gets killed. [DONE]
 
-  - `exit`: exit needs to be run on the main thread, for the same
-      reasons that cd needs to be run there. [DONE]
+  - `exit`: exit needs to be run on the main thread, for the same reasons that
+    cd needs to be run there. [DONE]
 
   - `help`: help needs to be a builtin because it is specific to my
-      application. [DONE]
+    application. [DONE]
 
   - `|` (pipe operator): the pipe operator will be a builtin. It will take the
-      text output from one command and pass it to another command.
-      https://downloads.haskell.org/~ghc/6.12.2/docs/html/libraries/unix-2.4.0.1/System-Posix-IO.html#8
+    text output from one command and pass it to another command.
+    https://downloads.haskell.org/~ghc/6.12.2/docs/html/libraries/unix-2.4.0.1/System-Posix-IO.html#8
 
   - `>` (I/O redirection operator): the redirection operator will allow the
-      user to take stdout and redirect it into a file. Can redirect between
-      files.
+    user to take stdout and redirect it into a file. Can redirect between
+    files.
 
-  - Environment variable management: `set`, `unset`, `list`, etc.
+  - Environment variable management: `set`, `unset`, `list`, etc. [DONE]
 
-- Config file: Allow configuration of a PATH variable and other,
-    user-defined, variables to be loaded when a shell is spawned. The 
-    config file must be written in Haskell, of course.
+- Config file: Allow configuration of a PATH variable and other, user-defined,
+  variables to be loaded when a shell is spawned. 
 
 - Maybe some auto complete (Dr. Otte says: "See readline").
 
 - Run a command in the background and return the control back to the terminal.
 
-- Run a background command with auto recovery mode i.e. the program is automatically restarted if it dies due to any reason other than a SIGSEGV or a SIGKILL.
+- Run a background command with auto recovery mode i.e. the program is
+  automatically restarted if it dies due to any reason other than a SIGSEGV or
+  a SIGKILL.
 
 - Support multiple concurrent background processes.
 
@@ -46,18 +47,19 @@ Aaron Smith `smithah4`
 
 - background process fails; should restart, but report to user somehow.
 
-- failed foreground commands should not auto-restart and should instead
-simply notify the user.
+- failed foreground commands should not auto-restart and should instead simply
+  notify the user.
 
 - If concurrent background processes are running and one fails, have some way
-to identify it so that the user knows which of the background processes
-failed. 
+  to identify it so that the user knows which of the background processes
+  failed. 
 
 #### Milestones
 
 March 24 – Submit a report about the design.
 
-April 9 – Status update and submit a set of slides describing what I have done up to this point.
+April 9 – Status update and submit a set of slides describing what I have done
+up to this point.
 
 April 21 – Final report.
 
