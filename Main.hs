@@ -140,7 +140,8 @@ hashExport :: [String] -> Env -> IO (Status, Env)
 hashExport [arg] env = do home <- getHomeDirectory
                           let p = exportParse arg home
                           return (Status {code = Prompt, pid = Nothing}, exportInsert p env)
-hashExport _ _ = fail "Too many arguments passed to export"
+hashExport _ env = do putStrLn "Wrong number of arguments passed to export."
+                      return (Status {code = Prompt, pid = Nothing}, env)
 
 -- |Fork and exec a command with associated arguments. Return child PID.
 execute :: String -> [String] -> Env -> IO Status
