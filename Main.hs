@@ -11,7 +11,7 @@ import System.Exit
 import System.Directory
 import Control.Monad
 import System.IO.Error
-import System.Console.Readline (readline)
+import System.Console.Readline (readline, addHistory, setKeymap, getKeymapByName)
 import System.Environment
 
 data StatusCode = Exit | Prompt | Wait deriving (Eq, Show)
@@ -23,17 +23,26 @@ builtinCmds = [("cd", hashCd),
               ("help", hashHelp), 
               ("exit", hashExit),
               ("export", hashExport),
-              ("printenv", hashPrintEnv)]
+              ("printenv", hashPrintenv),
+              ("bindkey", hashBindkey)]
 
 -- |Top level prompt for shell. Loops until exit status is sent.
 main :: IO ()
 main = do
     dir <- getCurrentDirectory
     -- prompt for input
-    putStr (last (splitOn "/" dir) ++  " $ ")
+    let prompt = last (splitOn "/" dir) ++  " $ "
     -- read and split input; replace environment vars
+    input <- readline prompt
+    case input of
+      Nothing -> main
+      Just i -> runCommand i
+
+runCommand :: String -> IO ()
+runCommand line = do
+    addHistory line -- add this line to the command history
     env <- getEnvironment
-    tok <- liftM (splitOn " " . replaceEnvVars env . unpack . strip . pack) getLine
+    let tok = (splitOn " " . replaceEnvVars env . unpack . strip . pack) line
     -- launch child process and keep pid
     status <- hashRun tok
     -- respond to child PIDs of different id's
@@ -44,6 +53,7 @@ main = do
               Status {code=Wait, pid=(Just childPid)} -> wait childPid responder
               Status {code=Wait, pid=Nothing} -> fail "Invalid status code."
     responder status
+
 
 -- |Replace any instances of environment variables with their expanded
 -- form.
@@ -111,19 +121,32 @@ hashExit _ = do
 
 -- |Provide our own version of printenv that prints our own environment
 -- variables.
-hashPrintEnv :: [String] -> IO Status
-hashPrintEnv [] = do env <- getEnvironment
+hashPrintenv :: [String] -> IO Status
+hashPrintenv [] = do env <- getEnvironment
                      mapM_ (\x -> putStrLn $ fst x ++ "=" ++ snd x) env
                      return Status {code = Prompt, pid = Nothing}
-hashPrintEnv _ = do putStrLn "Too many arguments passed to printenv."
+hashPrintenv _ = do putStrLn "Too many arguments passed to printenv."
                     return Status {code = Prompt, pid = Nothing}
 
+-- |Export an environment variable.
 hashExport :: [String] -> IO Status
 hashExport [arg] = do let (x:y:_) = splitOn "=" arg
                       setEnv x y
                       return Status {code = Prompt, pid = Nothing}
 hashExport _ = do putStrLn "Wrong number of arguments passed to export."
                   return Status {code = Prompt, pid = Nothing}
+
+-- |Set emacs or vi keybindings mode.
+hashBindkey :: [String] -> IO Status
+hashBindkey [arg]
+    | arg == "-v" = do keymap <- getKeymapByName "vi"
+                       setKeymap keymap
+                       return Status {code = Prompt, pid = Nothing}
+    | arg == "-e" = do keymap <- getKeymapByName "emacs"
+                       setKeymap keymap
+                       return Status {code = Prompt, pid = Nothing}
+hashBindkey _ = do putStrLn "Wrong number of arguments passed to export."
+                   return Status {code = Prompt, pid = Nothing}
 
 -- |Fork and exec a command with associated arguments. Return child PID.
 execute :: String -> [String] -> IO Status
