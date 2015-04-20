@@ -87,3 +87,13 @@ Haskell. I'm writing on OSX, but it should work on Linux distros also.
 4. Optionally install Guard (a Ruby plugin) to enable automatic running of
    tests when files are saved.
 
+5. Install readline bindings: 
+
+    a. `brew install readline`
+
+    b. `cabal install readline
+    --extra-include-dirs=/usr/local/Cellar/readline/6.3.8/include/
+    --extra-lib-dirs=/usr/local/Cellar/readline/6.3.8/lib/
+    --configure-option=--with-readline-includes=/usr/local/Cellar/readline/6.3.8/include/
+    --configure-option=--with-readline-libraries=/usr/local/Cellar/readline/6.3.8/lib/`
+

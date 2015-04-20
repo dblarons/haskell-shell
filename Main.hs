@@ -10,6 +10,8 @@ import System.Exit
 import System.Directory
 import Control.Monad
 import System.IO.Error
+import System.Console.Readline (readline)
+import System.Environment
 
 data StatusCode = Exit | Prompt | Wait deriving (Eq, Show)
 data Status = Status {code :: StatusCode, pid :: Maybe ProcessID} deriving (Show)
