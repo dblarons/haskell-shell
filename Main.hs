@@ -3,6 +3,7 @@ module Main where
 import Data.List.Split
 import Data.List (isInfixOf)
 import Data.List.Utils (replace)
+import Data.Text (strip, unpack, pack)
 import System.Posix.Process
 import System.Posix.Types
 import System.Posix.Directory
@@ -16,38 +17,29 @@ import System.Environment
 data StatusCode = Exit | Prompt | Wait deriving (Eq, Show)
 data Status = Status {code :: StatusCode, pid :: Maybe ProcessID} deriving (Show)
 
--- |Type synonym for the environment structure.
-type Env = [(String, String)]
-
 -- |Built in commands available for execution.
 builtinCmds :: [(String, [String] -> IO Status)]
 builtinCmds = [("cd", hashCd), 
               ("help", hashHelp), 
-              ("exit", hashExit)]
-
--- |Built in commands that require access to env.
-builtinCmdsEnv :: [(String, [String] -> Env -> IO (Status, Env))]
-builtinCmdsEnv = [("export", hashExport),
-                 ("printenv", hashPrintEnv)]
-
--- |Entry point for shell. Start prompt with clean environment.
-main :: IO ()
-main = prompt []
+              ("exit", hashExit),
+              ("export", hashExport),
+              ("printenv", hashPrintEnv)]
 
 -- |Top level prompt for shell. Loops until exit status is sent.
-prompt :: Env -> IO ()
-prompt env = do
+main :: IO ()
+main = do
     dir <- getCurrentDirectory
     -- prompt for input
     putStr (last (splitOn "/" dir) ++  " $ ")
-    -- read and split input
-    tok <- liftM (splitOn " " . replaceEnvVars env) getLine
+    -- read and split input; replace environment vars
+    env <- getEnvironment
+    tok <- liftM (splitOn " " . replaceEnvVars env . unpack . strip . pack) getLine
     -- launch child process and keep pid
-    (status, newEnv) <- hashRun tok env
+    status <- hashRun tok
     -- respond to child PIDs of different id's
     let responder s = 
             case s of
-              Status {code=Prompt} -> prompt newEnv
+              Status {code=Prompt} -> main
               Status {code=Exit} -> return ()
               Status {code=Wait, pid=(Just childPid)} -> wait childPid responder
               Status {code=Wait, pid=Nothing} -> fail "Invalid status code."
@@ -55,7 +47,7 @@ prompt env = do
 
 -- |Replace any instances of environment variables with their expanded
 -- form.
-replaceEnvVars :: Env -> String -> String
+replaceEnvVars :: [(String, String)] -> String -> String
 replaceEnvVars env x = 
     foldl (\acc xs -> 
           if ("$" ++ fst xs) `isInfixOf` acc 
@@ -77,21 +69,15 @@ wait childPID responder = do
                    _ -> responder Status {code = Prompt, pid = Nothing}
 
 -- |Run builtin command if it exists, otherwise run from PATH.
-hashRun :: [String] -> Env -> IO (Status, Env)
-hashRun [] _ = fail "Empty environment sent to hashRun."
-hashRun (cmd:args) env = 
-    let func = lookup cmd builtinCmds
-    in case func of
-         -- builtin exists, does not require ENV
-         Just f -> do status <- f args
-                      return (status, env)
-         Nothing -> let envFunc = lookup cmd builtinCmdsEnv
-                        in case envFunc of
-                             -- builtin exists, requires ENV
-                             Just f -> f args env
-                             -- no builtin exists, run from PATH
-                             Nothing -> do status <- execute cmd args env
-                                           return (status, env)
+hashRun :: [String] -> IO Status
+hashRun [] = return Status {code = Prompt, pid = Nothing}
+hashRun [""] = do putStrLn "No command provided."
+                  return Status {code = Prompt, pid = Nothing}
+hashRun (cmd:args) = 
+    let builtin = lookup cmd builtinCmds
+    in case builtin of
+         Just b -> b args -- builtin exists
+         Nothing -> execute cmd args -- no builtin exists
 
 -- |Change directories.
 hashCd :: [String] -> IO Status
@@ -123,37 +109,25 @@ hashExit _ = do
     putStrLn "Exiting..."
     return Status {code = Exit, pid = Nothing}
 
--- |Export a new or updated entry to the shell environment. 
-exportInsert :: (String, String) -> Env -> Env
-exportInsert x@(var, path) env =
-    case existing of
-      Just _ -> map (\y -> if fst y == var then x else y) env
-      Nothing -> env ++ [x]
-    where existing = lookup var env
-
--- |Parse an export command and return a tuple describing the action: new,
--- append, or prepend.
-exportParse :: String -> String -> (String, String)
-exportParse x home = case parts of
-                       [a, b] -> (a, b)
-    where parts = map (replace "$HOME" home) $ splitOn "=" x
-
 -- |Provide our own version of printenv that prints our own environment
 -- variables.
-hashPrintEnv :: [String] -> Env -> IO (Status, Env)
-hashPrintEnv [] env = do mapM_ (\x -> putStrLn $ fst x ++ "=" ++ snd x) env
-                         return (Status {code = Prompt, pid = Nothing}, env)
+hashPrintEnv :: [String] -> IO Status
+hashPrintEnv [] = do env <- getEnvironment
+                     mapM_ (\x -> putStrLn $ fst x ++ "=" ++ snd x) env
+                     return Status {code = Prompt, pid = Nothing}
+hashPrintEnv _ = do putStrLn "Too many arguments passed to printenv."
+                    return Status {code = Prompt, pid = Nothing}
 
-hashExport :: [String] -> Env -> IO (Status, Env)
-hashExport [arg] env = do home <- getHomeDirectory
-                          let p = exportParse arg home
-                          return (Status {code = Prompt, pid = Nothing}, exportInsert p env)
-hashExport _ env = do putStrLn "Wrong number of arguments passed to export."
-                      return (Status {code = Prompt, pid = Nothing}, env)
+hashExport :: [String] -> IO Status
+hashExport [arg] = do let (x:y:_) = splitOn "=" arg
+                      setEnv x y
+                      return Status {code = Prompt, pid = Nothing}
+hashExport _ = do putStrLn "Wrong number of arguments passed to export."
+                  return Status {code = Prompt, pid = Nothing}
 
 -- |Fork and exec a command with associated arguments. Return child PID.
-execute :: String -> [String] -> Env -> IO Status
-execute cmd args env = 
+execute :: String -> [String] -> IO Status
+execute cmd args = 
     case args of
       [] -> handle cmd [] False
       [x] -> bgHandler [x]
@@ -161,15 +135,13 @@ execute cmd args env =
     where bgHandler xs = case last xs of
                            "&" -> handle cmd (init xs) True
                            _ -> handle cmd args False
-          handle c a bg = do pid' <- forkExec c a env
+          handle c a bg = do pid' <- forkExec c a
                              return $ pidHandler pid' bg
 
 -- |Fork with defaults of: Command; Search PATH? true; Args; Environment of
 -- nothing
--- TODO: Search PATH here before executing a command. Prepend correct path
--- to command name.
-forkExec :: String -> [String] -> Env -> IO ProcessID
-forkExec cmd args env = forkProcess (executeFile cmd True args Nothing)
+forkExec :: String -> [String] -> IO ProcessID
+forkExec cmd args = forkProcess (executeFile cmd True args Nothing)
 
 pidHandler :: ProcessID -> Bool -> Status
 pidHandler pid' isBg
