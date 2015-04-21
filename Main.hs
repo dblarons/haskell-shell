@@ -26,18 +26,28 @@ builtinCmds = [("cd", hashCd),
               ("printenv", hashPrintenv),
               ("bindkey", hashBindkey)]
 
--- |Top level prompt for shell. Loops until exit status is sent.
+-- |Top level entry-point for shell.
 main :: IO ()
-main = do
+main = do initialize
+          prompt
+
+-- |Loops, continually prompting, until exit status is sent.
+prompt :: IO ()
+prompt = do
     dir <- getCurrentDirectory
-    -- prompt for input
-    let prompt = last (splitOn "/" dir) ++  " $ "
     -- read and split input; replace environment vars
-    input <- readline prompt
+    input <- readline $ last (splitOn "/" dir) ++  " $ "
     case input of
-      Nothing -> main
+      Nothing -> prompt
       Just i -> runCommand i
 
+-- |Initialize the shell environment. Right now, only a few functions,
+-- later, load from init dotfile.
+initialize :: IO ()
+initialize = do keymap <- getKeymapByName "vi"
+                setKeymap keymap
+
+-- |Execute a command after it has been readline'd by prompt.
 runCommand :: String -> IO ()
 runCommand line = do
     addHistory line -- add this line to the command history
@@ -48,7 +58,7 @@ runCommand line = do
     -- respond to child PIDs of different id's
     let responder s = 
             case s of
-              Status {code=Prompt} -> main
+              Status {code=Prompt} -> prompt
               Status {code=Exit} -> return ()
               Status {code=Wait, pid=(Just childPid)} -> wait childPid responder
               Status {code=Wait, pid=Nothing} -> fail "Invalid status code."
@@ -88,6 +98,24 @@ hashRun (cmd:args) =
     in case builtin of
          Just b -> b args -- builtin exists
          Nothing -> execute cmd args -- no builtin exists
+
+-- |Fork and exec a command with associated arguments. Return child PID.
+execute :: String -> [String] -> IO Status
+execute cmd args = 
+    case args of
+      [] -> handle cmd [] False
+      [x] -> bgHandler [x]
+      xs -> bgHandler xs
+    where bgHandler xs = case last xs of
+                           "&" -> handle cmd (init xs) True
+                           _ -> handle cmd args False
+          handle c a bg = do pid' <- forkExec c a
+                             return $ pidHandler pid' bg
+
+-- |Fork with defaults of: Command; Search PATH? true; Args; Environment of
+-- nothing
+forkExec :: String -> [String] -> IO ProcessID
+forkExec cmd args = forkProcess (executeFile cmd True args Nothing)
 
 -- |Change directories.
 hashCd :: [String] -> IO Status
@@ -147,24 +175,6 @@ hashBindkey [arg]
                        return Status {code = Prompt, pid = Nothing}
 hashBindkey _ = do putStrLn "Wrong number of arguments passed to export."
                    return Status {code = Prompt, pid = Nothing}
-
--- |Fork and exec a command with associated arguments. Return child PID.
-execute :: String -> [String] -> IO Status
-execute cmd args = 
-    case args of
-      [] -> handle cmd [] False
-      [x] -> bgHandler [x]
-      xs -> bgHandler xs
-    where bgHandler xs = case last xs of
-                           "&" -> handle cmd (init xs) True
-                           _ -> handle cmd args False
-          handle c a bg = do pid' <- forkExec c a
-                             return $ pidHandler pid' bg
-
--- |Fork with defaults of: Command; Search PATH? true; Args; Environment of
--- nothing
-forkExec :: String -> [String] -> IO ProcessID
-forkExec cmd args = forkProcess (executeFile cmd True args Nothing)
 
 pidHandler :: ProcessID -> Bool -> Status
 pidHandler pid' isBg
