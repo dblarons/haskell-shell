@@ -33,7 +33,7 @@ Aaron Smith `smithah4`
 - Config file: Allow configuration of a PATH variable and other, user-defined,
   variables to be loaded when a shell is spawned. 
 
-- Maybe some auto complete (Dr. Otte says: "See readline").
+- Maybe some auto complete (Dr. Otte says: "See readline"). [DONE]
 
 - Run a command in the background and return the control back to the terminal.
 
