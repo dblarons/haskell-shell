@@ -24,6 +24,14 @@ main = hspec $ do
       let cmd = "ls -al | | cat"
       pipeParser cmd `shouldBe` Pipe (Cmd "ls -al") (Pipe (Cmd "") (Cmd "cat"))
 
+    it "should parse a file redirection" $ do
+      let cmd = "ls -al > foo.txt"
+      pipeParser cmd `shouldBe` Pipe (Cmd "ls -al") (HFile "foo.txt")
+
+    it "should parse a file redirection after pipes" $ do
+      let cmd = "ls -al | grep foo > foo.txt"
+      pipeParser cmd `shouldBe` Pipe (Cmd "ls -al") (Pipe (Cmd "grep foo") (HFile "foo.txt"))
+
   describe "backgroundParser" $ do
     it "should return updated string and true if command should be run in background" $ do
       let cmd = "ls -al | grep foo &"

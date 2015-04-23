@@ -85,6 +85,10 @@ instance CommandLike (Pipeline String) where
                                     dec <- getExitStatus res2
                                     return $ CommandResult (cmdOutput res2) (return dec)
            x -> return $ CommandResult (return []) (return x)
+    -- Redirect input into file.
+    invoke (HFile name) closefds input =
+        do writeFile name input
+           return $ CommandResult (return []) (return (Exited ExitSuccess))
     -- Unwrap Cmd and call invoke on the command it contains. invoke
     -- differently for builtin command or external.
     invoke (Cmd src) closefds input = 
@@ -94,7 +98,7 @@ instance CommandLike (Pipeline String) where
              Just b -> invoke b closefds (unwords args) -- invoke builtin
              Nothing -> invoke (cmd, args) closefds input
 
--- |Make a builtin runnable as a command. Takes args string as input.
+-- |Make a builtin runnable act as a command. Takes args string as input.
 instance CommandLike ([String] -> IO String) where
     invoke func _ input = -- split args from string into words before executing
         return $ CommandResult (func (words input)) (return (Exited ExitSuccess))
@@ -174,7 +178,10 @@ pipeParser :: String -> Pipeline String
 pipeParser str = toTree $ splitOn "|" $ unwords . words $ str :: Pipeline String
     where toTree cmds = case cmds of
                           [] -> Cmd "" -- invalid case
-                          [x] -> Cmd (unpack . strip . pack $ x)
+                          [x] -> if ">" `isInfixOf` x
+                                   then let y = map (unwords . words) (splitOn ">" x)
+                                        in Pipe (toTree [head y]) (HFile (last y))
+                                   else Cmd (unwords . words $ x)
                           (x:xs) -> Pipe (toTree [x]) (toTree xs)
 
 -- |Check if command should be backgrounded or not.
@@ -269,7 +276,7 @@ hashHelp _ =
             \------------------------\n\n\
             \Builtins: \n"
            builtins = foldl (\x y -> x ++ "\n" ++ fst y) "" builtinCmds
-       return $ str ++ builtins
+       return $ str ++ builtins ++ "\n"
 
 -- |Exit the shell. TODO: Fix exit so it exits.
 hashExit :: [String] -> IO String
@@ -281,7 +288,7 @@ hashExit _ = do putStrLn "Exiting..."
 -- variables.
 hashPrintenv :: [String] -> IO String
 hashPrintenv [] = do env <- getEnvironment
-                     return $ foldl (\x y -> x ++ "\n" ++ fst y ++ "=" ++ snd y) "" env
+                     return $ foldl (\x y -> x ++ "\n" ++ fst y ++ "=" ++ snd y) "" env ++ "\n"
 hashPrintenv _ = return "Too many arguments passed to printenv."
 
 -- |Export an environment variable.
