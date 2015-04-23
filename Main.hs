@@ -47,7 +47,9 @@ builtinCmds = [("cd", hashCd),
               ("exit", hashExit),
               ("export", hashExport),
               ("printenv", hashPrintenv),
-              ("bindkey", hashBindkey)]
+              ("bindkey", hashBindkey),
+              ("vim", hashVim),
+              ("tmux", hashTmux)]
 
 -- |Top level entry-point for shell.
 main :: IO ()
@@ -146,7 +148,7 @@ instance CommandLike (String, [String]) where
          stdouthdl <- fdToHandle stdoutread
 
          return CommandResult {cmdOutput = hGetContents stdouthdl,
-                              getExitStatus = wait childPID closefds stdinwrite stdoutread}
+                              getExitStatus = waitPipe childPID closefds stdinwrite stdoutread}
 
         where child closefds stdinread stdoutwrite =
                 do -- connect these pipes to standard I/O
@@ -167,8 +169,8 @@ instance CommandLike (String, [String]) where
 -- |Wait on child PID if command is not being run in the background.
 -- If backgrounded, spawn another thread in which waiting on pipes can be
 -- done.
-wait :: ProcessID -> CloseFDs -> Fd -> Fd -> IO ProcessStatus
-wait childPID closefds stdinwrite stdoutread =
+waitPipe :: ProcessID -> CloseFDs -> Fd -> Fd -> IO ProcessStatus
+waitPipe childPID closefds stdinwrite stdoutread =
     do -- wait for child
        status <- getProcessStatus True False childPID
        -- unpack status; fail if status not present
@@ -176,6 +178,14 @@ wait childPID closefds stdinwrite stdoutread =
          Nothing -> fail "Error: Nothing from getProcessStatus"
          Just ps -> do removeCloseFDs closefds [stdinwrite, stdoutread]
                        return ps
+
+-- |Wait on a command that does not have file descriptors
+wait :: ProcessID -> IO ProcessStatus
+wait childPID =
+    do status <- getProcessStatus True False childPID
+       case status of
+         Nothing -> fail "Error: Nothing from getProcessStatus"
+         Just ps -> return ps
 
 -- |Evaluate two exit codes in a pipe and return a "combined" exit code.
 -- Reflects the first error encountered.
@@ -316,6 +326,16 @@ hashExport [arg] = do let (x:y:_) = splitOn "=" arg
                       setEnv x y
                       return ""
 hashExport _ = return "Wrong number of arguments passed to export."
+
+hashVim :: [String] -> IO String
+hashVim args = do childPID <- forkProcess $ executeFile "vim" True args Nothing
+                  wait childPID
+                  return []
+
+hashTmux :: [String] -> IO String
+hashTmux args = do childPID <- forkProcess $ executeFile "tmux" True args Nothing
+                   wait childPID
+                   return []
 
 -- |Set emacs or vi keybindings mode.
 hashBindkey :: [String] -> IO String
