@@ -21,12 +21,11 @@ Aaron Smith `smithah4`
     application. [DONE]
 
   - `|` (pipe operator): the pipe operator will be a builtin. It will take the
-    text output from one command and pass it to another command.
-    https://downloads.haskell.org/~ghc/6.12.2/docs/html/libraries/unix-2.4.0.1/System-Posix-IO.html#8
+    text output from one command and pass it to another command. [DONE]
 
   - `>` (I/O redirection operator): the redirection operator will allow the
     user to take stdout and redirect it into a file. Can redirect between
-    files.
+    files. [DONE]
 
   - Environment variable management: `set`, `unset`, `list`, etc. [DONE]
 
@@ -36,23 +35,16 @@ Aaron Smith `smithah4`
 - Maybe some auto complete (Dr. Otte says: "See readline"). [DONE]
 
 - Run a command in the background and return the control back to the terminal.
-
-- Run a background command with auto recovery mode i.e. the program is
-  automatically restarted if it dies due to any reason other than a SIGSEGV or
-  a SIGKILL.
-
-- Support multiple concurrent background processes.
+  [DONE]
 
 #### Error Conditions
 
-- background process fails; should restart, but report to user somehow.
-
 - failed foreground commands should not auto-restart and should instead simply
-  notify the user.
+  notify the user. [DONE]
 
 - If concurrent background processes are running and one fails, have some way
   to identify it so that the user knows which of the background processes
-  failed. 
+  failed. [DONE]
 
 #### Milestones
 
