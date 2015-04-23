@@ -79,12 +79,14 @@ initialize = do home <- getHomeDirectory
 
 parseDotfile :: String -> IO ()
 parseDotfile s = 
-    do foldl (\x y -> initLine x (words y)) (return []) (lines s)
+    do mapM_ (initLine . words) (lines s)
        return ()
-    where initLine x l@(y:ys) = case y of
+    where initLine l@(y:ys) = case y of
                                   "bindkey" -> hashBindkey ys
                                   "export" -> hashExport ys
                                   _ -> fail $ "Unknown line in .hashrc: " ++ unwords l
+          -- Handle blank lines in dotfile.
+          initLine _ = return ""
 
 
 -- |Make a Pipeline runnable as a command.

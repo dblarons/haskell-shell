@@ -27,15 +27,29 @@ Aaron Smith `smithah4`
     user to take stdout and redirect it into a file. Can redirect between
     files. [DONE]
 
-  - Environment variable management: `set`, `unset`, `list`, etc. [DONE]
+  - Environment variable management: `export`, `printenv`. [DONE]
+
+  - Bindkey for choosing between emacs and vi editing modes.
 
 - Config file: Allow configuration of a PATH variable and other, user-defined,
   variables to be loaded when a shell is spawned. [DONE]
 
-- Maybe some auto complete (Dr. Otte says: "See readline"). [DONE]
+- Auto complete (Dr. Otte says: "See readline"). [DONE]
 
-- Run a command in the background and return the control back to the terminal.
-  [DONE]
+#### Overview
+
+Parsing things was very important in my project. In particular, parsing
+commands into my Pipeline format and parsing the .hashrc dotfile were made much
+easier by using haskell.
+
+My Pipeline type made it easy to recursively evaluate a pipeline in
+a Haskell-esque manner. The pipeline type contains a command, a file name, or
+a pipe. Each pipe contains two ends, each of which must be a command, a file
+name, or another pipe.
+
+#### Operating System Concepts
+
+Forking, exec'ing, waiting, and piping are all present in my project.
 
 #### Error Conditions
 
@@ -73,13 +87,7 @@ Haskell. I'm writing on OSX, but it should work on Linux distros also.
 
 2. Install the [Haskell Platform](https://www.haskell.org/platform/)
 
-3. Run `cabal configure` to configure the project without tests and `cabal
-   configure --enable-tests` to configure with tests.
-
-4. Optionally install Guard (a Ruby plugin) to enable automatic running of
-   tests when files are saved.
-
-5. Install readline bindings: 
+4. Install readline bindings: 
 
     a. `brew install readline`
 
@@ -89,3 +97,27 @@ Haskell. I'm writing on OSX, but it should work on Linux distros also.
     --configure-option=--with-readline-includes=/usr/local/Cellar/readline/6.3.8/include/
     --configure-option=--with-readline-libraries=/usr/local/Cellar/readline/6.3.8/lib/`
 
+5. Run `cabal configure` to configure the project without tests and `cabal
+   configure --enable-tests` to configure with tests.
+
+6. Run `ghci` to start an interpreter.
+
+7. Run `:l Main.hs` in interpreter to begin interpreting the Main file.
+
+8. Run `main` in interpreter after `:l Main.hs` to begin the shell.
+
+#### How project should be used.
+
+1. `ls -al | grep foo | grep bar`
+
+2. `find . &`
+
+3. `export PATH=$PATH:/foobar`
+
+4. `printenv`
+
+5. `bindkey -v` or `bindkey -e`
+
+6. `export CS281=awesome`
+
+7. `help`
