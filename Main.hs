@@ -27,7 +27,7 @@ type CloseFDs = MVar [Fd]
 type Background = Bool
 
 -- |Type for a parsed user command. Tuples represent piped data.
-data Pipeline a = Cmd a | Pipe (Pipeline a) (Pipeline a) deriving (Show, Eq)
+data Pipeline a = Cmd a | HFile a | Pipe (Pipeline a) (Pipeline a) deriving (Show, Eq)
 
 -- |Result of running a command.
 data CommandResult = CommandResult {
@@ -186,8 +186,8 @@ backgroundParser str = let cleanStr = unwords . words $ str
                             _ -> (str, False)
 
 -- |Execute a 'CommandLike'.
-runIO :: CommandLike a => a -> IO()
-runIO cmd =
+runIO :: CommandLike a => a -> Bool -> IO()
+runIO cmd background =
     do closefds <- newMVar [] -- init closefds list
        res <- invoke cmd closefds [] -- invoke the command
 
@@ -196,12 +196,15 @@ runIO cmd =
        putStr output
 
        -- Wait for termination and get exit status.
-       ec <- getExitStatus res
-       case ec of
-         Exited ExitSuccess -> return ()
-         x -> do putStrLn "Uh oh, looks like that didn't work."
-                 return ()
-
+       let waitForExit = do ec <- getExitStatus res
+                            case ec of
+                              Exited ExitSuccess -> return ()
+                              x -> do putStrLn "Uh oh, looks like that didn't work."
+                                      return ()
+       unless background waitForExit
+       return ()
+                
+       
 -- |Execute a command after it has been readline'd by prompt.
 runCommand :: String -> IO ()
 runCommand "" = prompt -- Nothing was entered, so return to prompt.
@@ -216,7 +219,7 @@ runCommand line = do
     let pipeline = pipeParser $ replaceEnvVars env cmd
 
     -- Run the CommandLike Pipeline.
-    runIO pipeline
+    runIO pipeline background
 
     -- Return to prompt.
     prompt
