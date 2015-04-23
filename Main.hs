@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 module Main where
 
 import Data.List.Split
@@ -19,9 +20,6 @@ import Control.Concurrent
 import Control.Concurrent.MVar
 import Control.Exception.Base (catch, IOException)
 
-data StatusCode = Exit | Prompt | Wait deriving (Eq, Show)
-data Status = Status {code :: StatusCode, pid :: Maybe ProcessID} deriving (Show)
-
 -- |A global list of FDs that should be closed in the client.
 type CloseFDs = MVar [Fd]
 
@@ -31,8 +29,19 @@ type Background = Bool
 -- |Type for a parsed user command. Tuples represent piped data.
 data Pipeline a = Cmd a | Pipe (Pipeline a) (Pipeline a) deriving (Show, Eq)
 
+-- |Result of running a command.
+data CommandResult = CommandResult {
+                   cmdOutput :: IO String, -- output of a command
+                   getExitStatus :: IO ProcessStatus -- exit status of command
+                   }
+
+-- |Class for anything that is a runnable command.
+class CommandLike a where
+    -- |Given a command a input String, invoke the command.
+    invoke :: a -> CloseFDs -> String -> IO CommandResult
+
 -- |Built in commands available for execution.
-builtinCmds :: [(String, [String] -> IO Status)]
+builtinCmds :: [(String, [String] -> IO String)]
 builtinCmds = [("cd", hashCd),
               ("help", hashHelp),
               ("exit", hashExit),
@@ -61,6 +70,68 @@ initialize :: IO ()
 initialize = do keymap <- getKeymapByName "vi"
                 setKeymap keymap
 
+-- |Make a Pipeline runnable as a command.
+instance CommandLike (Pipeline String) where
+    -- Pipe output between src and destination in a Pipe.
+    invoke (Pipe src dest) closefds input =
+      do res1 <- invoke src closefds input
+         output1 <- cmdOutput res1
+         res2 <- invoke dest closefds output1
+         return $ CommandResult (cmdOutput res2) (getEC res1 res2)
+    -- Unwrap Cmd and call invoke on the command it contains. invoke
+    -- differently for builtin command or external.
+    invoke (Cmd src) closefds input = 
+        let (cmd:args) = words src
+            builtin = lookup cmd builtinCmds
+        in case builtin of
+             Just b -> invoke b closefds (unwords args) -- invoke builtin
+             Nothing -> invoke (cmd, args) closefds input
+
+-- |Make a builtin runnable as a command. Takes args string as input.
+instance CommandLike ([String] -> IO String) where
+    invoke func _ input = -- split args from string into words before executing
+        return $ CommandResult (func (words input)) (return (Exited ExitSuccess))
+
+-- |Fork and exec a command with associated arguments. Return child PID.
+-- Take a list of file descriptors needing to be closed and a string of
+-- input to that command.
+instance CommandLike (String, [String]) where
+    invoke (cmd, args) closefds input =
+      do (stdinread, stdinwrite) <- createPipe
+         (stdoutread, stdoutwrite) <- createPipe
+
+         -- Add parent FDs to close list because they must always be closed
+         -- in the children.
+         addCloseFDs closefds [stdinwrite, stdoutread]
+
+         -- Fork the child, decide whether it should be run in background.
+         childPID <- withMVar closefds (\fds -> forkExec cmd args fds stdinread stdoutwrite)
+
+         -- Close client-side FDs in parent.
+         closeFd stdinread
+         closeFd stdoutwrite
+
+         -- Write the input to the command.
+         stdinhdl <- fdToHandle stdinwrite
+         forkIO $ do hPutStr stdinhdl input
+                     hClose stdinhdl
+
+         -- Prepare to receive output from the command.
+         stdouthdl <- fdToHandle stdoutread
+
+         return CommandResult {cmdOutput = hGetContents stdouthdl,
+                              getExitStatus = waitf childPID closefds stdinwrite stdoutread}
+
+-- |Evaluate two exit codes in a pipe and return a "combined" exit code.
+-- Reflects the first error encountered.
+getEC :: CommandResult -> CommandResult -> IO ProcessStatus
+getEC src dest =
+    do sec <- getExitStatus src
+       dec <- getExitStatus dest
+       case sec of
+         Exited ExitSuccess -> return dec
+         x -> return x
+
 -- |Parse an input string into a recursive Pipeline data structure.
 pipeParser :: String -> Pipeline String
 pipeParser str = toTree $ splitOn "|" str :: Pipeline String
@@ -77,6 +148,22 @@ backgroundParser str = let cleanStr = (unpack . strip . pack) str
                             '&' -> (init cleanStr, True)
                             _ -> (str, False)
 
+-- |Execute a 'CommandLike'.
+runIO :: CommandLike a => a -> IO()
+runIO cmd =
+    do closefds <- newMVar [] -- init closefds list
+       res <- invoke cmd closefds [] -- invoke the command
+
+       -- Process output.
+       output <- cmdOutput res
+       putStr output
+
+       -- Wait for termination and get exit status
+       ec <- getExitStatus res
+       case ec of
+         Exited ExitSuccess -> return ()
+         x -> fail $ "Exited: " ++ show x
+
 -- |Execute a command after it has been readline'd by prompt.
 runCommand :: String -> IO ()
 runCommand line = do
@@ -84,24 +171,15 @@ runCommand line = do
     env <- getEnvironment
 
     -- Strip, then split on pipe operators.
-    let cmds = (splitOn "|" . unpack . strip . pack) line
+    let (cmd, background) = backgroundParser line
 
     -- Strip line, replace environment variables, then split into args.
-    let tok = (splitOn " " . replaceEnvVars env . unpack . strip . pack) line
+    let pipeline = pipeParser cmd
 
-    -- Initialize a list of FDs to close.
-    closefds <- newMVar []
+    -- Run the CommandLike Pipeline.
+    runIO pipeline
 
-    -- launch child process and keep pid
-    status <- hashRun tok closefds ""
-    -- respond to child PIDs of different id's
-    let responder s =
-            case s of
-              Status {code=Prompt} -> prompt
-              Status {code=Exit} -> return ()
-              Status {code=Wait, pid=(Just childPid)} -> wait childPid responder
-              Status {code=Wait, pid=Nothing} -> fail "Invalid status code."
-    responder status
+    prompt
 
 -- |Replace any instances of environment variables with their expanded
 -- form.
@@ -112,84 +190,35 @@ replaceEnvVars env x =
             then replace ("$" ++ fst xs) (snd xs) acc
             else acc) x env
 
--- |Wait on the child PID. Handle any errors, then send status to continue
--- with prompt
-wait :: ProcessID -> (Status -> IO ()) -> IO ()
-wait childPID responder = do
-    -- wait for child
-    status <- getProcessStatus True False childPID
-    -- unpack status; fail if status not present;
-    case status of
-      Nothing -> fail "Error: Nothing from getProcessStatus"
-      Just ps -> case ps of
-                   Exited ExitSuccess ->
-                    responder Status {code = Prompt, pid = Nothing} -- exited normally
-                   _ -> responder Status {code = Prompt, pid = Nothing}
+-- |Wait on child PID if command is not being run in the background.
+-- If backgrounded, spawn another thread in which waiting on pipes can be
+-- done.
+waitf :: ProcessID -> CloseFDs -> Fd -> Fd -> IO ProcessStatus
+waitf childPID closefds stdinwrite stdoutread =
+    do -- wait for child
+       status <- getProcessStatus True False childPID
+       -- unpack status; fail if status not present
+       case status of
+         Nothing -> fail "Error: Nothing from getProcessStatus"
+         Just ps -> do removeCloseFDs closefds [stdinwrite, stdoutread]
+                       return ps
 
--- |Run builtin command if it exists, otherwise run from PATH.
-hashRun :: [String] -> CloseFDs -> String -> IO Status
-hashRun [] _ _ = return Status {code = Prompt, pid = Nothing}
-hashRun [""] _ _ = do putStrLn "No command provided."
-                      return Status {code = Prompt, pid = Nothing}
-hashRun (cmd:args) closefds input =
-    let builtin = lookup cmd builtinCmds
-    in case builtin of
-         Just b -> b args -- builtin exists
-         Nothing -> execute cmd args closefds input -- no builtin exists
-
--- |Fork and exec a command with associated arguments. Return child PID.
--- Take a list of file descriptors needing to be closed and a string of
--- input to that command.
-execute :: String -> [String] -> CloseFDs -> String -> IO Status
-execute cmd args closefds input =
-    do (stdinread, stdinwrite) <- createPipe
-       (stdoutread, stdoutwrite) <- createPipe
-
-       -- Add parent FDs to close list because they must always be closed
-       -- in the children.
-       addCloseFDs closefds [stdinwrite, stdoutread]
-
-       -- Fork the child, decide whether it should be run in background.
-       status <- withMVar closefds (\fds -> bgHandler fds stdinread stdoutwrite) :: IO Status
-
-       -- Close client-side FDs in parent.
-       closeFd stdinread
-       closeFd stdoutwrite
-
-       -- Write the input to the command.
-       stdinhdl <- fdToHandle stdinwrite
-       forkIO $ do hPutStr stdinhdl input
-                   hClose stdinhdl
-
-       -- Prepare to receive output from the command.
-       stdouthdl <- fdToHandle stdoutread
-
-       return status
-
-        -- TODO: Replace this with code that correctly handles backgrounding.
-        where bgHandler fds stdinread stdoutwrite =
-               case args of
-                 [] -> do p <- forkExec cmd [] fds stdinread stdoutwrite
-                          return $ pidHandler False p :: IO Status
-                 xs ->
-                    case last xs of
-                      "&" -> do p <- forkExec cmd (init xs) fds stdinread stdoutwrite
-                                return $ pidHandler True p :: IO Status
-                      _ -> do p <- forkExec cmd xs fds stdinread stdoutwrite
-                              return $ pidHandler False p :: IO Status
-
--- |Add FDs to list of FDs that must be closed in a child after a fork
+-- |Add FDs to list of FDs that must be closed in a child after a fork.
 addCloseFDs :: CloseFDs -> [Fd] -> IO ()
 addCloseFDs closefds newfds =
     modifyMVar_ closefds (\oldfds -> return $ oldfds ++ newfds)
 
--- |Given a pid and background flag, return status code
-pidHandler :: Bool -> ProcessID -> Status
-pidHandler isBg pid'
-    | pid' == 0 || pid' == -1 = Status {code = Exit, pid = Nothing} -- child forked or error occurred, so exit
-    | isBg = Status {code = Prompt, pid = Nothing}
-    | not isBg = Status {code = Wait, pid = Just pid'} -- parent waits on child
-pidHandler _ _ = Status {code = Exit, pid = Nothing} -- invalid case
+-- |Remove FDs from the list of FDs that must be closed.
+removeCloseFDs :: CloseFDs -> [Fd] -> IO ()
+removeCloseFDs closefds toRemove =
+    modifyMVar_ closefds (\fdlist -> return $ procfdlist fdlist toRemove)
+
+    where procfdlist = foldl removefd -- Remove FDs in fdlist from procfdlist
+          -- Remove only the first occurrence of any given fd.
+          removefd [] _ = []
+          removefd (x:xs) fd
+                | fd == x = xs -- fd found, remove and return
+                | otherwise = x : removefd xs fd -- fd not found, continue looking
 
 -- |Fork with defaults of: Command; Search PATH? true; Args; Environment of
 -- nothing
@@ -211,61 +240,51 @@ forkExec cmd args closefds stdinread stdoutwrite =
        forkProcess (executeFile cmd True args Nothing)
 
 -- |Change directories.
-hashCd :: [String] -> IO Status
+hashCd :: [String] -> IO String
 hashCd [arg] =
     do change <- tryIOError (changeWorkingDirectory arg)
-       let status = Status {code = Prompt, pid = Nothing}
        case change of
-         Left _ -> do putStrLn $ "cd: no such file or directory: " ++ arg
-                      return status
-         Right _ -> return status
-hashCd _ = do putStrLn "Not a valid path in pwd."
-              return Status {code = Prompt, pid = Nothing}
+         Left _ -> return $ "cd: no such file or directory: " ++ arg
+         Right _ -> return ""
+hashCd _ = return "Not a valid path in pwd."
 
 -- |Get help.
-hashHelp :: [String] -> IO Status
-hashHelp _ = do
-    putStrLn "------------------------"
-    putStrLn "HASH -- Haskell, A SHell"
-    putStrLn "Author: Aaron Smith"
-    putStrLn "------------------------\n"
-    putStrLn "Builtins:"
-    mapM_ (putStrLn . fst) builtinCmds
-    putStrLn ""
-    return Status {code = Prompt, pid = Nothing}
+hashHelp :: [String] -> IO String
+hashHelp _ =
+    do let str = "------------------------ \n\
+            \HASH -- Haskell, A SHell \n\
+            \Author: Aaron Smith \n\
+            \------------------------\n\n\
+            \Builtins: \n"
+           builtins = foldl (\x y -> x ++ "\n" ++ fst y) "" builtinCmds
+       return $ str ++ builtins
 
--- |Exit the shell
-hashExit :: [String] -> IO Status
+-- |Exit the shell. TODO: Fix exit so it exits.
+hashExit :: [String] -> IO String
 hashExit _ = do
-    putStrLn "Exiting..."
-    return Status {code = Exit, pid = Nothing}
+    return "Exiting..."
 
 -- |Provide our own version of printenv that prints our own environment
 -- variables.
-hashPrintenv :: [String] -> IO Status
+hashPrintenv :: [String] -> IO String
 hashPrintenv [] = do env <- getEnvironment
-                     mapM_ (\x -> putStrLn $ fst x ++ "=" ++ snd x) env
-                     return Status {code = Prompt, pid = Nothing}
-hashPrintenv _ = do putStrLn "Too many arguments passed to printenv."
-                    return Status {code = Prompt, pid = Nothing}
+                     return $ foldl (\x y -> x ++ "\n" ++ fst y ++ "=" ++ snd y) "" env
+hashPrintenv _ = return "Too many arguments passed to printenv."
 
 -- |Export an environment variable.
-hashExport :: [String] -> IO Status
+hashExport :: [String] -> IO String
 hashExport [arg] = do let (x:y:_) = splitOn "=" arg
                       setEnv x y
-                      return Status {code = Prompt, pid = Nothing}
-hashExport _ = do putStrLn "Wrong number of arguments passed to export."
-                  return Status {code = Prompt, pid = Nothing}
+                      return ""
+hashExport _ = return "Wrong number of arguments passed to export."
 
 -- |Set emacs or vi keybindings mode.
-hashBindkey :: [String] -> IO Status
+hashBindkey :: [String] -> IO String
 hashBindkey [arg]
     | arg == "-v" = do keymap <- getKeymapByName "vi"
                        setKeymap keymap
-                       return Status {code = Prompt, pid = Nothing}
+                       return ""
     | arg == "-e" = do keymap <- getKeymapByName "emacs"
                        setKeymap keymap
-                       return Status {code = Prompt, pid = Nothing}
-hashBindkey _ = do putStrLn "Wrong number of arguments passed to export."
-                   return Status {code = Prompt, pid = Nothing}
-
+                       return ""
+hashBindkey _ = return "Wrong number of arguments passed to export."
