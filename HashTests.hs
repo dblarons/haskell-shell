@@ -37,8 +37,7 @@ main = hspec $ do
     it "should replace Tilde with the home directory" $ do
       let cmd = "cd ~/Documents/Code"
       home <- getHomeDirectory
-      res <- replaceTilde cmd
-      res `shouldBe` "cd " ++ home ++ "/Documents/Code"
+      replaceTilde home cmd `shouldBe` "cd " ++ "/" ++ home ++ "/Documents/Code"
 
   describe "backgroundParser" $ do
     it "should return updated string and true if command should be run in background" $ do

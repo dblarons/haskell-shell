@@ -30,7 +30,7 @@ Aaron Smith `smithah4`
   - Environment variable management: `set`, `unset`, `list`, etc. [DONE]
 
 - Config file: Allow configuration of a PATH variable and other, user-defined,
-  variables to be loaded when a shell is spawned. 
+  variables to be loaded when a shell is spawned. [DONE]
 
 - Maybe some auto complete (Dr. Otte says: "See readline"). [DONE]
 
