@@ -58,7 +58,7 @@ main = do initialize
 prompt :: IO ()
 prompt = do
     dir <- getCurrentDirectory
-    -- read and split input; replace environment vars
+    -- read and split input
     input <- readline $ last (splitOn "/" dir) ++  " $ "
     case input of
       Nothing -> prompt
@@ -67,8 +67,23 @@ prompt = do
 -- |Initialize the shell environment. Right now, only a few functions,
 -- later, load from init dotfile.
 initialize :: IO ()
-initialize = do keymap <- getKeymapByName "vi"
-                setKeymap keymap
+initialize = do home <- getHomeDirectory
+                exists <- doesFileExist $ replaceTilde home "~/.hashrc"
+                if exists
+                  then do f <- readFile $ replaceTilde home "~/.hashrc"
+                          parseDotfile f
+                  else do keymap <- getKeymapByName "vi"
+                          setKeymap keymap
+
+parseDotfile :: String -> IO ()
+parseDotfile s = 
+    do foldl (\x y -> initLine x (words y)) (return []) (lines s)
+       return ()
+    where initLine x l@(y:ys) = case y of
+                                  "bindkey" -> hashBindkey ys
+                                  "export" -> hashExport ys
+                                  _ -> fail $ "Unknown line in .hashrc: " ++ unwords l
+
 
 -- |Make a Pipeline runnable as a command.
 instance CommandLike (Pipeline String) where
@@ -218,12 +233,13 @@ runCommand "" = prompt -- Nothing was entered, so return to prompt.
 runCommand line = do
     addHistory line -- add this line to the command history
     env <- getEnvironment
+    home <- getHomeDirectory
 
     -- Check if background command was sent.
     let (cmd, background) = backgroundParser line
 
-    -- Replace environment variables, then form pipeline.
-    let pipeline = pipeParser $ replaceEnvVars env cmd
+    -- Replace environment variables and tilde, then form pipeline.
+    let pipeline = pipeParser $ replaceEnvVars env $ replaceTilde home cmd
 
     -- Run the CommandLike Pipeline.
     runIO pipeline background
@@ -239,6 +255,9 @@ replaceEnvVars env x =
           if ("$" ++ fst xs) `isInfixOf` acc
             then replace ("$" ++ fst xs) (snd xs) acc
             else acc) x env
+
+replaceTilde :: String -> String -> String
+replaceTilde home = replace "~" ("/" ++ home)
 
 -- |Add FDs to list of FDs that must be closed in a child after a fork.
 addCloseFDs :: CloseFDs -> [Fd] -> IO ()

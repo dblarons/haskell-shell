@@ -2,6 +2,7 @@ module HashTests where
 
 import Main hiding (main)
 import Test.Hspec
+import System.Directory
 
 main :: IO ()
 main = hspec $ do
@@ -31,6 +32,13 @@ main = hspec $ do
     it "should parse a file redirection after pipes" $ do
       let cmd = "ls -al | grep foo > foo.txt"
       pipeParser cmd `shouldBe` Pipe (Cmd "ls -al") (Pipe (Cmd "grep foo") (HFile "foo.txt"))
+
+  describe "replaceTilde" $ do
+    it "should replace Tilde with the home directory" $ do
+      let cmd = "cd ~/Documents/Code"
+      home <- getHomeDirectory
+      res <- replaceTilde cmd
+      res `shouldBe` "cd " ++ home ++ "/Documents/Code"
 
   describe "backgroundParser" $ do
     it "should return updated string and true if command should be run in background" $ do
