@@ -62,7 +62,7 @@ prompt = do
     input <- readline $ last (splitOn "/" dir) ++  " $ "
     case input of
       Nothing -> prompt
-      Just i -> runCommand i
+      Just i -> runCommand $ (unwords . words) i
 
 -- |Initialize the shell environment. Right now, only a few functions,
 -- later, load from init dotfile.
@@ -72,12 +72,19 @@ initialize = do keymap <- getKeymapByName "vi"
 
 -- |Make a Pipeline runnable as a command.
 instance CommandLike (Pipeline String) where
-    -- Pipe output between src and destination in a Pipe.
+    -- Deconstruct pipe into source and destination, pipe data between
+    -- them, and return a common exit code.
     invoke (Pipe src dest) closefds input =
       do res1 <- invoke src closefds input
-         output1 <- cmdOutput res1
-         res2 <- invoke dest closefds output1
-         return $ CommandResult (cmdOutput res2) (getEC res1 res2)
+         output1 <- cmdOutput res1 -- output of first cmd
+         sec <- getExitStatus res1 -- unwrap (i.e. force evaluate) first command
+         -- Wait for first command to complete successfully before starting
+         -- second command. Otherwise a race condition for FDs ensues.
+         case sec of
+           Exited ExitSuccess -> do res2 <- invoke dest closefds output1
+                                    dec <- getExitStatus res2
+                                    return $ CommandResult (cmdOutput res2) (return dec)
+           x -> return $ CommandResult (return []) (return x)
     -- Unwrap Cmd and call invoke on the command it contains. invoke
     -- differently for builtin command or external.
     invoke (Cmd src) closefds input = 
@@ -105,7 +112,7 @@ instance CommandLike (String, [String]) where
          addCloseFDs closefds [stdinwrite, stdoutread]
 
          -- Fork the child, decide whether it should be run in background.
-         childPID <- withMVar closefds (\fds -> forkExec cmd args fds stdinread stdoutwrite)
+         childPID <- withMVar closefds (\fds -> forkProcess (child fds stdinread stdoutwrite))
 
          -- Close client-side FDs in parent.
          closeFd stdinread
@@ -120,13 +127,43 @@ instance CommandLike (String, [String]) where
          stdouthdl <- fdToHandle stdoutread
 
          return CommandResult {cmdOutput = hGetContents stdouthdl,
-                              getExitStatus = waitf childPID closefds stdinwrite stdoutread}
+                              getExitStatus = wait childPID closefds stdinwrite stdoutread}
+
+        where child closefds stdinread stdoutwrite =
+                do -- connect these pipes to standard I/O
+                   dupTo stdinread stdInput
+                   dupTo stdoutwrite stdOutput
+
+                   -- Close original pipe FDs
+                   closeFd stdinread
+                   closeFd stdoutwrite
+
+                   -- Close open FDs that were inherited from the parent.
+                   mapM_ (\fd -> catch (closeFd fd) (\e -> do let err = show (e :: IOException)
+                                                              putStrLn err
+                                                              return ())) closefds
+
+                   executeFile cmd True args Nothing
+
+-- |Wait on child PID if command is not being run in the background.
+-- If backgrounded, spawn another thread in which waiting on pipes can be
+-- done.
+wait :: ProcessID -> CloseFDs -> Fd -> Fd -> IO ProcessStatus
+wait childPID closefds stdinwrite stdoutread =
+    do -- wait for child
+       status <- getProcessStatus True False childPID
+       -- unpack status; fail if status not present
+       case status of
+         Nothing -> fail "Error: Nothing from getProcessStatus"
+         Just ps -> do removeCloseFDs closefds [stdinwrite, stdoutread]
+                       return ps
 
 -- |Evaluate two exit codes in a pipe and return a "combined" exit code.
 -- Reflects the first error encountered.
-getEC :: CommandResult -> CommandResult -> IO ProcessStatus
-getEC src dest =
+getEC :: CommandResult -> IO CommandResult -> IO ProcessStatus
+getEC src res2 =
     do sec <- getExitStatus src
+       dest <- res2
        dec <- getExitStatus dest
        case sec of
          Exited ExitSuccess -> return dec
@@ -134,7 +171,7 @@ getEC src dest =
 
 -- |Parse an input string into a recursive Pipeline data structure.
 pipeParser :: String -> Pipeline String
-pipeParser str = toTree $ splitOn "|" str :: Pipeline String
+pipeParser str = toTree $ splitOn "|" $ unwords . words $ str :: Pipeline String
     where toTree cmds = case cmds of
                           [] -> Cmd "" -- invalid case
                           [x] -> Cmd (unpack . strip . pack $ x)
@@ -143,7 +180,7 @@ pipeParser str = toTree $ splitOn "|" str :: Pipeline String
 -- |Check if command should be backgrounded or not.
 -- Return str unchanged if no & found; return without & if & found.
 backgroundParser :: String -> (String, Background)
-backgroundParser str = let cleanStr = (unpack . strip . pack) str
+backgroundParser str = let cleanStr = unwords . words $ str
                        in case last cleanStr of
                             '&' -> (init cleanStr, True)
                             _ -> (str, False)
@@ -158,27 +195,30 @@ runIO cmd =
        output <- cmdOutput res
        putStr output
 
-       -- Wait for termination and get exit status
+       -- Wait for termination and get exit status.
        ec <- getExitStatus res
        case ec of
          Exited ExitSuccess -> return ()
-         x -> fail $ "Exited: " ++ show x
+         x -> do putStrLn "Uh oh, looks like that didn't work."
+                 return ()
 
 -- |Execute a command after it has been readline'd by prompt.
 runCommand :: String -> IO ()
+runCommand "" = prompt -- Nothing was entered, so return to prompt.
 runCommand line = do
     addHistory line -- add this line to the command history
     env <- getEnvironment
 
-    -- Strip, then split on pipe operators.
+    -- Check if background command was sent.
     let (cmd, background) = backgroundParser line
 
-    -- Strip line, replace environment variables, then split into args.
-    let pipeline = pipeParser cmd
+    -- Replace environment variables, then form pipeline.
+    let pipeline = pipeParser $ replaceEnvVars env cmd
 
     -- Run the CommandLike Pipeline.
     runIO pipeline
 
+    -- Return to prompt.
     prompt
 
 -- |Replace any instances of environment variables with their expanded
@@ -189,19 +229,6 @@ replaceEnvVars env x =
           if ("$" ++ fst xs) `isInfixOf` acc
             then replace ("$" ++ fst xs) (snd xs) acc
             else acc) x env
-
--- |Wait on child PID if command is not being run in the background.
--- If backgrounded, spawn another thread in which waiting on pipes can be
--- done.
-waitf :: ProcessID -> CloseFDs -> Fd -> Fd -> IO ProcessStatus
-waitf childPID closefds stdinwrite stdoutread =
-    do -- wait for child
-       status <- getProcessStatus True False childPID
-       -- unpack status; fail if status not present
-       case status of
-         Nothing -> fail "Error: Nothing from getProcessStatus"
-         Just ps -> do removeCloseFDs closefds [stdinwrite, stdoutread]
-                       return ps
 
 -- |Add FDs to list of FDs that must be closed in a child after a fork.
 addCloseFDs :: CloseFDs -> [Fd] -> IO ()
@@ -218,26 +245,8 @@ removeCloseFDs closefds toRemove =
           removefd [] _ = []
           removefd (x:xs) fd
                 | fd == x = xs -- fd found, remove and return
-                | otherwise = x : removefd xs fd -- fd not found, continue looking
-
--- |Fork with defaults of: Command; Search PATH? true; Args; Environment of
--- nothing
-forkExec :: String -> [String] -> [Fd] -> Fd -> Fd -> IO ProcessID
-forkExec cmd args closefds stdinread stdoutwrite =
-    do -- connect these pipes to standard I/O
-       dupTo stdinread stdInput
-       dupTo stdoutwrite stdOutput
-
-       -- Close original pipe FDs
-       closeFd stdinread
-       closeFd stdoutwrite
-
-       -- Close open FDs that were inherited from the parent.
-       mapM_ (\fd -> catch (closeFd fd) (\e -> do let err = show (e :: IOException)
-                                                  putStrLn err
-                                                  return ())) closefds
-
-       forkProcess (executeFile cmd True args Nothing)
+                -- fd not found, continue looking
+                | otherwise = x : removefd xs fd
 
 -- |Change directories.
 hashCd :: [String] -> IO String
@@ -261,8 +270,9 @@ hashHelp _ =
 
 -- |Exit the shell. TODO: Fix exit so it exits.
 hashExit :: [String] -> IO String
-hashExit _ = do
-    return "Exiting..."
+hashExit _ = do putStrLn "Exiting..."
+                exitSuccess
+                return ""
 
 -- |Provide our own version of printenv that prints our own environment
 -- variables.
