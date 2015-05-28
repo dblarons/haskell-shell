@@ -1,85 +1,92 @@
-## Hash - Haskell, a Shell; or, Hashkell
+## A Shell in Haskell
 
-#### Team Members with their vunetid
+#### Forward
 
-Aaron Smith `smithah4`
+This project was created as part of a final project for the Operating Systems
+class at Vanderbilt University. One of the project choices was to implement
+a simple shell that supported a variety of commands (described below). I used
+Haskell because I thought it would be interesting to apply functional
+programming to a type of program that generally requires keeping a lot of state
+and doing tons of IO. The result is far from perfect, but the insights I had
+into programming in Haskell, programming with state, and my own design
+capabilities were well worth the experience.
 
-#### Project Description
+#### Built-In Commands
 
-- Run a command in foreground. [DONE]
+- `cd`: Change directory is a built-in because it must be run in the parent
+  process. Running it in the child is useless as the parent will still remain
+  in the same directory as before when the child process is killed.
 
-- Builtins
+- `exit`: Exit needs to be a built-in for the same reasons as `cd`.
 
-  - `cd`: change directory has to be run on the main thread, otherwise the
-    directory doesn't get changed because the thread that changed directory
-    gets killed. [DONE]
+- `help`: Help is a built-in because its functionality is specific to my
+  shell.
 
-  - `exit`: exit needs to be run on the main thread, for the same reasons that
-    cd needs to be run there. [DONE]
+- `|` (pipe operator): The pipe operator is a builtin. It takes the text output
+  from one command and passes it to another command. Built-in commands can also
+  be piped to/from.
 
-  - `help`: help needs to be a builtin because it is specific to my
-    application. [DONE]
+- `>` (I/O redirection operator): I/O redirection is implemented in one
+  direction only. It allows the user to take stdout and redirect it into
+  a file. It can also redirect between files.
 
-  - `|` (pipe operator): the pipe operator will be a builtin. It will take the
-    text output from one command and pass it to another command. [DONE]
+- `bindkey`: Allows the user to shoose between Emacs and Vi editing
+  line editing modes.
 
-  - `>` (I/O redirection operator): the redirection operator will allow the
-    user to take stdout and redirect it into a file. Can redirect between
-    files. [DONE]
+- `export`: Used for making new environment variables or modifying existing
+  ones.
 
-  - Environment variable management: `export`, `printenv`. [DONE]
+- `printenv`: Print all environment variables that have been set.
 
-  - Bindkey for choosing between emacs and vi editing modes.
+#### External Commands
 
-- Config file: Allow configuration of a PATH variable and other, user-defined,
-  variables to be loaded when a shell is spawned. [DONE]
+As long as a program is on your PATH, it can be run within this shell.
 
-- Auto complete (Dr. Otte says: "See readline"). [DONE]
+#### Config File
 
-#### Overview
+A config dotfile can be used with this shell. It should be named `.hashrc` and
+be placed in the users home directory (e.g. `~/.hashrc`).
 
-Parsing things was very important in my project. In particular, parsing
-commands into my Pipeline format and parsing the .hashrc dotfile were made much
-easier by using haskell.
+The `export` and `bindkey` commands can be used in the definition of the
+`.hashrc` file. It does not support any shell scripting.
 
-My Pipeline type made it easy to recursively evaluate a pipeline in
-a Haskell-esque manner. The pipeline type contains a command, a file name, or
-a pipe. Each pipe contains two ends, each of which must be a command, a file
-name, or another pipe.
+#### Autocomplete
 
-#### Operating System Concepts
+The shell supports autocomplete. Press tab to complete a command.
 
-Forking, exec'ing, waiting, and piping are all present in my project.
+#### Design
 
-#### Error Conditions
+One of the most interested aspects of my design is the pipeline I parsed
+a shell command into. This pipeline consists of a few typeclasses (interfaces
+in OO lingo) that can can be operated on uniformly. This allowed me to treat
+piping, file redirection, built-in, and external commands the same when
+executing them. These commands get built up into a linked list of sorts, which
+can then be recursively evaluated from left to right, passing the output of
+each command as the input to the next command.
 
-- failed foreground commands should not auto-restart and should instead simply
-  notify the user. [DONE]
+One of the problem with this model was a result of Haskell's functional design.
+The next command in the sequence would begin running before the prior one had
+finished. I unfortunately had to explicitly wait for the child process for each
+command to end before evaluating the next command in the sequence.
 
-- If concurrent background processes are running and one fails, have some way
-  to identify it so that the user knows which of the background processes
-  failed. [DONE]
+#### Background Tasks
 
-#### Milestones
+Support for background tasks was broken when I implemented piping. I have yet
+to fix it.
 
-March 24 – Submit a report about the design.
+#### Known Problems
 
-April 9 – Status update and submit a set of slides describing what I have done
-up to this point.
+In addition to background tasks not yet working, a few other (known) issues
+exist in this shell:
 
-April 21 – Final report.
+1. Running the shell inside of itself results in it recursively calling itself
+   into infinity. I do not recommend that you try this.
 
-#### Expected Schedule/Timeline
+2. Running the shell as your user shell breaks pipelining. It also breaks Tmux
+   and Vim.
 
-March 24 - Finish the first bullet point.
-
-April 9 - Finish the second and third bullet points.
-
-April 18 - Have the final bullet point finished.
-
-#### Language and OS Used
-
-Haskell. I'm writing on OSX, but it should work on Linux distros also.
+3. The shell does not play nicely with Vim's Syntastic plugin (and therefore
+   YouCompleteMe as well).
 
 #### Project setup
 
@@ -110,14 +117,12 @@ Haskell. I'm writing on OSX, but it should work on Linux distros also.
 
 1. `ls -al | grep foo | grep bar`
 
-2. `find . &`
+2. `export PATH=$PATH:/foobar`
 
-3. `export PATH=$PATH:/foobar`
+3. `printenv`
 
-4. `printenv`
+4. `bindkey -v` or `bindkey -e`
 
-5. `bindkey -v` or `bindkey -e`
+5. `export CS281=awesome`
 
-6. `export CS281=awesome`
-
-7. `help`
+6. `help`
