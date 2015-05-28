@@ -48,7 +48,6 @@ builtinCmds = [("cd", hashCd),
               ("export", hashExport),
               ("printenv", hashPrintenv),
               ("bindkey", hashBindkey),
-              ("vim", hashVim),
               ("tmux", hashTmux)]
 
 -- |Top level entry-point for shell.
@@ -106,8 +105,8 @@ instance CommandLike (Pipeline String) where
            x -> return $ CommandResult (return []) (return x)
     -- Redirect input into file.
     invoke (HFile name) closefds input =
-        do writeFile name input
-           return $ CommandResult (return []) (return (Exited ExitSuccess))
+      do writeFile name input
+         return $ CommandResult (return []) (return (Exited ExitSuccess))
     -- Unwrap Cmd and call invoke on the command it contains. invoke
     -- differently for builtin command or external.
     invoke (Cmd src) closefds input = 
@@ -134,14 +133,15 @@ instance CommandLike (String, [String]) where
          -- in the children.
          addCloseFDs closefds [stdinwrite, stdoutread]
 
-         -- Fork the child, decide whether it should be run in background.
+         -- Fork the child
          childPID <- withMVar closefds (\fds -> forkProcess (child fds stdinread stdoutwrite))
 
          -- Close client-side FDs in parent.
          closeFd stdinread
          closeFd stdoutwrite
 
-         -- Write the input to the command.
+         -- Write input (possibly the output of the last command) from the
+         -- parent through to the child.
          stdinhdl <- fdToHandle stdinwrite
          forkIO $ do hPutStr stdinhdl input
                      hClose stdinhdl
@@ -153,11 +153,11 @@ instance CommandLike (String, [String]) where
                               getExitStatus = waitPipe childPID closefds stdinwrite stdoutread}
 
         where child closefds stdinread stdoutwrite =
-                do -- connect these pipes to standard I/O
+                do -- Connect the child input/output pipes to standard I/O.
                    dupTo stdinread stdInput
                    dupTo stdoutwrite stdOutput
 
-                   -- Close original pipe FDs
+                   -- Close child's FDs.
                    closeFd stdinread
                    closeFd stdoutwrite
 
@@ -168,9 +168,8 @@ instance CommandLike (String, [String]) where
 
                    executeFile cmd True args Nothing
 
--- |Wait on child PID if command is not being run in the background.
--- If backgrounded, spawn another thread in which waiting on pipes can be
--- done.
+-- |Wait on childPID and close FDs after when child finishes. Return the
+-- ProcessStatus of this child to the caller.
 waitPipe :: ProcessID -> CloseFDs -> Fd -> Fd -> IO ProcessStatus
 waitPipe childPID closefds stdinwrite stdoutread =
     do -- wait for child
