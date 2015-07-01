@@ -64,7 +64,7 @@ executing them. These commands get built up into a linked list of sorts, which
 can then be recursively evaluated from left to right, passing the output of
 each command as the input to the next command.
 
-One of the problem with this model was a result of Haskell's functional design.
+One of the problems with this model was a result of Haskell's lazy design.
 The next command in the sequence would begin running before the prior one had
 finished. I unfortunately had to explicitly wait for the child process for each
 command to end before evaluating the next command in the sequence.
