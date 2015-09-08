@@ -1,5 +1,9 @@
 ## A Shell in Haskell
 
+Note: This was the first project I attempted in Haskell. As such, there are many, many flawed
+design choices and instances where I could have made better use of monads, etc. A more recent
+(though incomplete) project is my torrent client, located [here](https://github.com/dblarons/torrskel).
+
 #### Forward
 
 This project was created as part of a final project for the Operating Systems
